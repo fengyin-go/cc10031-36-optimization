@@ -5,6 +5,10 @@ services:
       - "8000:8000"
     environment:
       - APP_ENV=local
+      # 指标水位库落在持久卷，容器重建后处理水位与纳入版本不丢失
+      - METRICS_DB=/data/metric_watermark.sqlite3
+    volumes:
+      - metric-data:/data
   frontend:
     build: ./frontend
     ports:
@@ -14,3 +18,6 @@ services:
       VITE_PROXY_TARGET: http://backend:8000
     depends_on:
       - backend
+
+volumes:
+  metric-data:

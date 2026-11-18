@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.metrics import metric_engine
+from app.metrics.engine import EXEC_TERMINAL_STATES
 from app.services.base import BaseModuleService
 from app.store import store
 
@@ -19,6 +21,15 @@ class ExecutionLogService(BaseModuleService):
     STATUS_ORDER = ["执行中", "执行成功", "执行失败", "已超时", "已取消"]
     ACTION_RULES = {"归档日志": "执行成功"}
     NEGATIVE_ACTIONS = []
+
+    def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
+        """执行状态流转；进入终态即登记修订，触发受影响时间窗重算。"""
+        entry, message = super().run_action(entry_id, action)
+        if entry is not None and entry.get("status") in EXEC_TERMINAL_STATES:
+            metric_engine.register_revision(
+                self.MODULE, entry_id, reason=f"动作「{action}」进入终态")
+        return entry, message
+
 
     def query_execution_history(self,
                                  bot_name: str | None = None,

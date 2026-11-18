@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -227,6 +229,12 @@ def pipeline_element_execution() -> dict[str, object]:
     result = runtime_session.consume_strategies_and_execute()
     return {"ok": True, "result": result}
 
+
+# 运行概览指标接口（固定路径），必须在通用资源路由之前注册，
+# 否则 /api/report-dashboard/... 会被 /api/{module} 抢先匹配。
+from app.routers.metrics import router as metrics_router  # noqa: E402
+
+app.include_router(metrics_router)
 
 # 资源路由含 /api/{module}，必须放在 health / overview 之后注册，
 # 否则固定路径会被动态路径抢先匹配。

@@ -79,5 +79,53 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 运行概览：增量指标水位
+
+运行概览（`report_dashboard`）不再每次刷新都全量重算执行日志与采集批次，
+改由 `backend/app/metrics/` 下的**指标水位引擎**驱动，状态持久化在 SQLite。
+
+### 核心机制
+
+- **水位与版本同时持久化**：`metric_meta` 保存执行/批次已扫描到的最大 id（处理水位）
+  与已纳入指标流程版本（`metric-flow-v1` / `metric-flow-v2`），重启后继续处理，不重算历史。
+- **终态才纳入、台账去重**：`metric_processed` 以 `(source, source_id)` 为主键，
+  同一条执行/批次无论刷新多少次只纳入一次，升级指标流程后不会重复累计历史执行。
+- **修订只重算受影响窗口**：`metric_revisions` 登记修订记录及统计日期，
+  刷新时仅重建这些时间窗；执行记录/批次状态流转会自动登记修订边界。
+- **升级双策略**：
+  - `continue`：沿用旧水位与历史窗口结果，只让新增数据按新版本累计；
+  - `rebuild`：对受影响历史时间窗按新版本整体重建。
+    两种策略都靠台账去重，不重复累计同一执行。
+- **并发首胜**：同一时刻只接受首个成功刷新，其余并发请求返回
+  `36号处理终态：并发冲突`（业务码 36），不改变已累计指标。
+
+### 指标接口（前缀 `/api/report-dashboard`）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/watermark` | 指标水位、纳入版本、最近刷新耗时、迁移状态 |
+| GET | `/metrics?start=&end=` | 按日期范围查询时间窗指标数据集 |
+| GET | `/revisions` | 修订记录及重算状态 |
+| GET | `/upgrades` | 指标流程升级审计 |
+| POST | `/refresh?force=` | 增量刷新（并发冲突返回 36 号终态） |
+| POST | `/revisions` | 登记修订（仅终态记录，触发受影响窗口重算） |
+| POST | `/rebuild` | 对指定时间窗重建全部指标 |
+| POST | `/upgrade` | 升级指标流程（`continue` / `rebuild`） |
+| POST | `/legacy-boundary` | 把当前聚合标记为旧版本边界（兼容升级前场景） |
+
+### 数据库迁移与本地切换
+
+- 迁移脚本在 `backend/app/metrics/migrations.py`，幂等建表并登记
+  `metric_migrations`，流水线重复部署不会重建表或重复累计；容器启动时自动执行迁移。
+- 指标库路径由环境变量 `METRICS_DB` 控制（见 `.env.example`）：
+  默认 `backend/var/metric_watermark.sqlite3`，测试/隔离调试可用 `:memory:`。
+- 运维命令：
+
+```bash
+make migrate-metrics   # 流水线数据库迁移部署（幂等）
+make metrics-info      # 查看水位、纳入版本、最近刷新耗时
+make metrics-reset     # 本地开发环境切换：清空指标并重置水位（保留表结构）
+```
+
 领域：数据工程
 子方向：数据采集、爬虫与RPA
